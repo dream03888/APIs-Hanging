@@ -5,3 +5,8 @@ public/updates/*
 *.exe
 node_modules
 .env
+node_modules/
+.env
+*.exe
+dist/
+build/
