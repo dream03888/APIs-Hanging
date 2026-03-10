@@ -1,0 +1,7 @@
+public/updates/*.exe 
+public/uploads/*.exe
+public/uploads/*
+public/updates/*
+*.exe
+node_modules
+.env
