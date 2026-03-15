@@ -62,7 +62,9 @@ const UpdateStore = async (data) => {
 
 const getStore = async () => {
   const queryStr = `
-     SELECT id, name, name_eng, is_active, description, is_stock_enabled FROM stores`;
+     SELECT id, name, name_eng, is_active, description, is_stock_enabled 
+     FROM stores 
+     WHERE id != '00000000-0000-0000-0000-000000000000'`;
   try {
     return pool
       .query(queryStr)

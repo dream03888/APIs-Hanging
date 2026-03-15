@@ -46,15 +46,18 @@ const submitOrder = async (data) => {
 
         // 3. Insert main order
         const insertOrderSql = `
-            INSERT INTO tbl_orders (store_id, total_amount, status, pos_ref_no, payment_method, queue_number)
-            VALUES ($1, $2, 'completed', $3, $4, $5) RETURNING id, queue_number
+            INSERT INTO tbl_orders (store_id, total_amount, status, pos_ref_no, payment_method, queue_number, subtotal, discount_amount, promotion_id)
+            VALUES ($1, $2, 'completed', $3, $4, $5, $6, $7, $8) RETURNING id, queue_number
         `;
         const orderParams = [
             storeIdStr,
             data.totalAmount,
             data.posRefNo || 'UNKNOWN',
             data.paymentMethod || 'UNKNOWN',
-            nextQueueNo
+            nextQueueNo,
+            data.subtotal || data.totalAmount,
+            data.discount_amount || 0,
+            data.promotion_id || null
         ];
 
         const orderRes = await client.query(insertOrderSql, orderParams);
@@ -86,6 +89,15 @@ const submitOrder = async (data) => {
             }
         }
 
+        // 5. Increment Promotion Used Count
+        if (data.promotion_id) {
+            await client.query(`
+                UPDATE tbl_promotions 
+                SET used_count = used_count + 1 
+                WHERE id = $1
+            `, [data.promotion_id]);
+        }
+
         await client.query("COMMIT");
         return {
             status: 200,
@@ -105,6 +117,35 @@ const submitOrder = async (data) => {
     }
 };
 
+const getOrderDetails = async (orderId) => {
+    const queryOrder = `
+        SELECT o.*, s.name as store_name 
+        FROM tbl_orders o
+        LEFT JOIN stores s ON o.store_id = s.id
+        WHERE o.id = $1
+    `;
+    const queryItems = `
+        SELECT oi.*, p.name, p.name_eng 
+        FROM tbl_order_items oi
+        LEFT JOIN products p ON oi.product_id = p.id
+        WHERE oi.order_id = $1
+    `;
+    try {
+        const orderRes = await pool.query(queryOrder, [orderId]);
+        if (orderRes.rows.length === 0) return { status: 404, msg: "Order not found" };
+
+        const itemsRes = await pool.query(queryItems, [orderId]);
+        const order = orderRes.rows[0];
+        order.items = itemsRes.rows;
+
+        return { status: 200, msg: order };
+    } catch (error) {
+        console.error("Error getOrderDetails:", error);
+        return { status: 400, msg: error.message };
+    }
+};
+
 module.exports = {
-    submitOrder
+    submitOrder,
+    getOrderDetails
 };

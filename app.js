@@ -12,6 +12,9 @@ const user = require("./src/user.js");
 const dashboard = require("./src/dashboard.js");
 const inventory = require("./src/inventory.js");
 const order = require("./src/order.js");
+const promotion = require("./src/promotion.js");
+const coupon = require("./src/coupon.js");
+const masterOption = require("./src/master_option.js");
 const axios = require("axios");
 
 // --- Image Upload Setup ---
@@ -93,7 +96,9 @@ io.on("connection", (socket) => {
     const result = await product.createProduct(data);
     socket.emit("return_createProduct", result);
     if (result.status === 200 || result.status === 201) {
-      io.emit("menu_updated", { store_id: data.storeId || data.store_id, action: 'CREATE' });
+      const storeId = data.storeId || data.store_id;
+      const isMaster = storeId === '00000000-0000-0000-0000-000000000000';
+      io.emit("menu_updated", { store_id: isMaster ? null : storeId, action: 'CREATE' });
     }
   });
 
@@ -101,13 +106,28 @@ io.on("connection", (socket) => {
     const result = await product.updateProduct(data);
     socket.emit("return_updateProduct", result);
     if (result.status === 200) {
-      io.emit("menu_updated", { store_id: data.storeId || data.store_id, action: 'UPDATE' });
+      const storeId = data.storeId || data.store_id;
+      const isMaster = storeId === '00000000-0000-0000-0000-000000000000';
+      io.emit("menu_updated", { store_id: isMaster ? null : storeId, action: 'UPDATE' });
+    }
+  });
+
+  socket.on("cloneProductFromMaster", async (data) => {
+    const result = await product.cloneProductFromMaster(data);
+    socket.emit("return_cloneProductFromMaster", result);
+    if (result.status === 200) {
+      io.emit("menu_updated", { store_id: data.target_store_id, action: 'CLONE' });
     }
   });
 
   socket.on("getProduct", async (store_id) => {
     const result = await product.getProduct(store_id);
     socket.emit("return_getProduct", result);
+  });
+
+  socket.on("getMasterAddonGroups", async () => {
+    const result = await product.getMasterAddonGroups();
+    socket.emit("return_getMasterAddonGroups", result);
   });
 
   // --- Dashboard Data ---
@@ -119,6 +139,29 @@ io.on("connection", (socket) => {
   socket.on("getTopSellingItems", async (storeId) => {
     const result = await dashboard.getTopSellingItems(storeId);
     socket.emit("return_getTopSellingItems", result);
+  });
+
+  // --- Coupon Management ---
+  socket.on("createCouponCampaign", async (data) => {
+    const result = await coupon.createCouponCampaign(data);
+    socket.emit("return_createCouponCampaign", result);
+  });
+
+  socket.on("getCouponCampaigns", async () => {
+    const result = await coupon.getCouponCampaigns();
+    socket.emit("return_getCouponCampaigns", result);
+  });
+
+  socket.on("validateCoupon", async (data) => {
+    // data: { code, storeId, productIds }
+    const result = await coupon.validateCoupon(data.code, data.storeId, data.productIds);
+    socket.emit("return_validateCoupon", result);
+  });
+
+  socket.on("markCouponAsUsed", async (data) => {
+    // data: { code, orderId }
+    const result = await coupon.markCouponAsUsed(data.code, data.orderId);
+    socket.emit("return_markCouponAsUsed", result);
   });
 
   // --- User Management ---
@@ -166,6 +209,64 @@ io.on("connection", (socket) => {
       io.emit("new_order", result.msg);
     }
   });
+
+  socket.on("getOrderDetails", async (orderId) => {
+    const result = await order.getOrderDetails(orderId);
+    socket.emit("return_getOrderDetails", result);
+  });
+
+  // --- Promotions ---
+  socket.on("getPromotions", async (store_id) => {
+    const result = await promotion.getPromotions(store_id);
+    socket.emit("return_getPromotions", result);
+  });
+
+  socket.on("createPromotion", async (data) => {
+    const result = await promotion.createPromotion(data);
+    socket.emit("return_createPromotion", result);
+  });
+
+  socket.on("updatePromotion", async (data) => {
+    const result = await promotion.updatePromotion(data);
+    socket.emit("return_updatePromotion", result);
+  });
+
+  socket.on("deletePromotion", async (data) => {
+    const result = await promotion.deletePromotion(data);
+    socket.emit("return_deletePromotion", result);
+  });
+
+  socket.on("validatePromotion", async (data) => {
+    const result = await promotion.validatePromotion(data);
+    socket.emit("return_validatePromotion", result);
+  });
+
+  socket.on("getPromotionUsage", async (promotion_id) => {
+    const result = await promotion.getPromotionUsage(promotion_id);
+    socket.emit("return_getPromotionUsage", result);
+  });
+
+  // --- Master Options (Global) ---
+  socket.on("getMasterOptions", async () => {
+    const result = await masterOption.getMasterOptions();
+    socket.emit("return_getMasterOptions", result);
+  });
+
+  socket.on("createMasterOption", async (data) => {
+    const result = await masterOption.createMasterOption(data);
+    socket.emit("return_createMasterOption", result);
+  });
+
+  socket.on("updateMasterOption", async (data) => {
+    const result = await masterOption.updateMasterOption(data);
+    socket.emit("return_updateMasterOption", result);
+  });
+
+  socket.on("deleteMasterOption", async (id) => {
+    const result = await masterOption.deleteMasterOption(id);
+    socket.emit("return_deleteMasterOption", result);
+  });
+
   // -----------------------
 
   // --- Dashboard ---
