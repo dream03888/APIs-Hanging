@@ -46,8 +46,8 @@ const submitOrder = async (data) => {
 
         // 3. Insert main order
         const insertOrderSql = `
-            INSERT INTO tbl_orders (store_id, total_amount, status, pos_ref_no, payment_method, queue_number, subtotal, discount_amount, promotion_id)
-            VALUES ($1, $2, 'completed', $3, $4, $5, $6, $7, $8) RETURNING id, queue_number
+            INSERT INTO tbl_orders (store_id, total_amount, status, pos_ref_no, payment_method, queue_number, subtotal, discount_amount, promotion_id, order_type, table_number, shift_id)
+            VALUES ($1, $2, 'completed', $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING id, queue_number
         `;
         const orderParams = [
             storeIdStr,
@@ -57,7 +57,10 @@ const submitOrder = async (data) => {
             nextQueueNo,
             data.subtotal || data.totalAmount,
             data.discount_amount || 0,
-            data.promotion_id || null
+            data.promotion_id || null,
+            data.orderType || 'takeaway',
+            data.tableNumber || null,
+            data.shiftId || data.shift_id || null
         ];
 
         const orderRes = await client.query(insertOrderSql, orderParams);
@@ -147,5 +150,6 @@ const getOrderDetails = async (orderId) => {
 
 module.exports = {
     submitOrder,
+    placeOrder: submitOrder, // Alias to support different socket events
     getOrderDetails
 };

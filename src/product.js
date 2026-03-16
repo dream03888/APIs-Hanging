@@ -54,6 +54,9 @@ const updateProduct = async (data) => {
         await client.query("BEGIN");
 
         // 1. Update products main table
+        const masterStoreId = '00000000-0000-0000-0000-000000000000';
+        const currentProd = await client.query(`SELECT store_id FROM products WHERE id = $1`, [data.product_id]);
+
         // Use COALESCE so that master-linked products (which store name/image as NULL
         // and read them from the master row) don't accidentally violate NOT NULL.
         const discountValue = data.discount_value ?? null;
@@ -71,54 +74,59 @@ const updateProduct = async (data) => {
                 promotion_id  = $8
             WHERE id = $9;
         `;
+        const isMaster = currentProd.rows[0]?.store_id === masterStoreId;
+        const hasPromo = !!data.promotion_id;
+
         const productValues = [
-            data.name || null, data.price, data.image_url || null, data.name_eng || null,
-            discountValue, discountType, data.product_active, data.promotion_id || null, data.product_id
+            data.name || null,
+            data.price,
+            data.image_url || null,
+            data.name_eng || null,
+            hasPromo ? discountValue : 0,
+            hasPromo ? discountType : null,
+            data.product_active,
+            data.promotion_id || null,
+            data.product_id
         ];
         await client.query(updateProductSql, productValues);
 
         // --- Master to Child Sync logic ---
-        // If this is a Master Product and we are deactivating it, deactivate all children too.
-        const masterStoreId = '00000000-0000-0000-0000-000000000000';
-        const currentProd = await client.query(`SELECT store_id FROM products WHERE id = $1`, [data.product_id]);
-        if (currentProd.rows[0]?.store_id === masterStoreId && data.product_active === false) {
-            console.log(`Master product ${data.product_id} deactivated. Syncing to all child products...`);
+        // Only sync is_active from master. Promotions & discounts are now managed per-store.
+        if (isMaster) {
+            console.log(`Master product ${data.product_id} updated. Syncing is_active to all child products...`);
             await client.query(
-                `UPDATE products SET is_active = false WHERE master_product_id = $1`,
-                [data.product_id]
+                `UPDATE products SET is_active = $1 WHERE master_product_id = $2;`,
+                [data.product_active, data.product_id]
             );
         }
 
-        // 2. For master-linked products, addons come from the master – skip local upsert
-        const masterCheck = await client.query(
-            `SELECT master_product_id FROM products WHERE id = $1`, [data.product_id]
-        );
-        const isMasterLinked = masterCheck.rows[0]?.master_product_id != null;
+        // 2. We now ALLOW master-linked products to have their own addon overrides.
+        // If a local store manager saves addons, they will be stored locally for this product_id.
+        // We always perform the upsert for addons now, unless it's a child that wants to KEEP master addons.
+        // For simplicity, if the user hits "Save" on the menu form, we assume they want to save these specific addons.
 
-        if (!isMasterLinked) {
-            // 3. Delete existing options (only for stand-alone products)
-            await client.query(`DELETE FROM addon_groups WHERE product_id = $1;`, [data.product_id]);
+        // 3. Delete existing local options
+        await client.query(`DELETE FROM addon_groups WHERE product_id = $1;`, [data.product_id]);
 
-            // 4. Insert new option groups and choices
-            if (data.items && data.items.length > 0) {
-                for (let i = 0; i < data.items.length; i++) {
-                    const insertGroupSql = `INSERT INTO addon_groups (product_id, name, name_eng, is_required, is_multiple, min_choices, max_choices) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id;`;
-                    const groupValues = [data.product_id, data.items[i].group_name, data.items[i].group_name_eng, data.items[i].isRequired || false, data.items[i].isMultiple || false, data.items[i].minChoices || 0, data.items[i].maxChoices || 0];
-                    const resGroupId = await client.query(insertGroupSql, groupValues);
+        // 4. Insert new option groups and choices
+        if (data.items && data.items.length > 0) {
+            for (let i = 0; i < data.items.length; i++) {
+                const insertGroupSql = `INSERT INTO addon_groups (product_id, name, name_eng, is_required, is_multiple, min_choices, max_choices) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id;`;
+                const groupValues = [data.product_id, data.items[i].group_name, data.items[i].group_name_eng, data.items[i].isRequired || false, data.items[i].isMultiple || false, data.items[i].minChoices || 0, data.items[i].maxChoices || 0];
+                const resGroupId = await client.query(insertGroupSql, groupValues);
 
-                    if (data.items[i].choices && data.items[i].choices.length > 0) {
-                        for (let j = 0; j < data.items[i].choices.length; j++) {
-                            const insertChoiceSql = `INSERT INTO addon_options (group_id, name, price, name_eng, product_id, is_active) VALUES ($1, $2, $3, $4, $5, $6);`;
-                            const choiceValues = [
-                                resGroupId.rows[0].id,
-                                data.items[i].choices[j].options_name,
-                                data.items[i].choices[j].options_price,
-                                data.items[i].choices[j].options_name_eng,
-                                data.product_id,
-                                data.items[i].choices[j].options_active || true
-                            ];
-                            await client.query(insertChoiceSql, choiceValues);
-                        }
+                if (data.items[i].choices && data.items[i].choices.length > 0) {
+                    for (let j = 0; j < data.items[i].choices.length; j++) {
+                        const insertChoiceSql = `INSERT INTO addon_options (group_id, name, price, name_eng, product_id, is_active) VALUES ($1, $2, $3, $4, $5, $6);`;
+                        const choiceValues = [
+                            resGroupId.rows[0].id,
+                            data.items[i].choices[j].options_name,
+                            data.items[i].choices[j].options_price,
+                            data.items[i].choices[j].options_name_eng,
+                            data.product_id,
+                            data.items[i].choices[j].options_active || true
+                        ];
+                        await client.query(insertChoiceSql, choiceValues);
                     }
                 }
             }
@@ -189,9 +197,10 @@ SELECT
   p.price,
   COALESCE(mp.image_url, p.image_url) AS image_url,
   p.is_active AS product_active,
-  COALESCE(tp.type::TEXT, mp.discount_type::TEXT, p.discount_type::TEXT) AS discount_type,
-  COALESCE(tp.value::NUMERIC, mp.discount_value::NUMERIC, p.discount_value::NUMERIC) AS discount_value,
-  COALESCE(mp.promotion_id, p.promotion_id) AS promotion_id,
+  COALESCE(tp.type::TEXT, p.discount_type::TEXT, mp.discount_type::TEXT) AS discount_type,
+  COALESCE(tp.value::NUMERIC, p.discount_value::NUMERIC, mp.discount_value::NUMERIC) AS discount_value,
+  -- Prefer local product's own promotion, fallback to master's if branch has none set
+  COALESCE(p.promotion_id, mp.promotion_id) AS promotion_id,
   COALESCE(p.master_product_id, NULL) as master_product_id,
   (
     SELECT jsonb_agg(s.name) 
@@ -199,11 +208,17 @@ SELECT
     JOIN stores s ON p2.store_id = s.id 
     WHERE p2.master_product_id = p.id
   ) as linked_stores,
-  COALESCE(o.items, '[]'::jsonb) AS items
+  -- Smart Addon Selection: Use local addons if they exist (count > 0), otherwise fallback to master's addons
+  CASE 
+    WHEN (SELECT COUNT(*) FROM addon_groups WHERE product_id = p.id) > 0 THEN COALESCE(olocal.items, '[]'::jsonb)
+    ELSE COALESCE(omaster.items, '[]'::jsonb)
+  END AS items
 FROM products p
 LEFT JOIN products mp ON p.master_product_id = mp.id
-LEFT JOIN tbl_promotions tp ON COALESCE(mp.promotion_id, p.promotion_id) = tp.id
-LEFT JOIN options o ON COALESCE(p.master_product_id, p.id) = o.product_id
+-- Join promotion on the local product's own promotion first, then fallback to master's
+LEFT JOIN tbl_promotions tp ON COALESCE(p.promotion_id, mp.promotion_id) = tp.id
+LEFT JOIN options olocal ON p.id = olocal.product_id
+LEFT JOIN options omaster ON p.master_product_id = omaster.product_id
 WHERE p.store_id = $1;`;
     const questrValue = [store_id];
     try {
@@ -297,10 +312,46 @@ const getMasterAddonGroups = async () => {
     }
 };
 
+const getSyncStatus = async (master_product_id) => {
+    try {
+        const query = `
+            SELECT store_id 
+            FROM products 
+            WHERE master_product_id = $1
+        `;
+        const res = await pool.query(query, [master_product_id]);
+        return { status: 200, msg: res.rows.map(r => r.store_id) };
+    } catch (e) {
+        console.error('Error getSyncStatus:', e);
+        return { status: 400, msg: e.message };
+    }
+}
+
+const getMenuSets = async (store_id) => {
+    try {
+        const queryStr = `
+            SELECT ms.id, ms.name, ms.store_id as "storeId", 
+                   COALESCE(array_agg(msi.product_id) FILTER (WHERE msi.product_id IS NOT NULL), '{}') as "menuIds"
+            FROM menu_sets ms
+            LEFT JOIN menu_sets_items msi ON ms.id = msi.menu_set_id
+            WHERE ms.store_id = $1
+            GROUP BY ms.id
+            ORDER BY ms.name;
+        `;
+        const result = await pool.query(queryStr, [store_id]);
+        return { status: 200, msg: result.rows };
+    } catch (error) {
+        console.error("Error getMenuSets:", error);
+        return { status: 400, msg: error.message };
+    }
+};
+
 module.exports = {
     createProduct,
-    getProduct,
     updateProduct,
     cloneProductFromMaster,
-    getMasterAddonGroups
+    getProduct,
+    getMasterAddonGroups,
+    getSyncStatus,
+    getMenuSets
 };

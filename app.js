@@ -12,9 +12,14 @@ const user = require("./src/user.js");
 const dashboard = require("./src/dashboard.js");
 const inventory = require("./src/inventory.js");
 const order = require("./src/order.js");
+const member = require("./src/member.js");
+const config = require("./src/config.js");
+const masterOption = require("./src/master_option.js");
 const promotion = require("./src/promotion.js");
 const coupon = require("./src/coupon.js");
-const masterOption = require("./src/master_option.js");
+const shift = require("./src/shift.js");
+
+
 const axios = require("axios");
 
 // --- Image Upload Setup ---
@@ -125,9 +130,40 @@ io.on("connection", (socket) => {
     socket.emit("return_getProduct", result);
   });
 
+  socket.on("getMenuSets", async (store_id) => {
+    const result = await product.getMenuSets(store_id);
+    socket.emit("return_getMenuSets", result);
+  });
+
+  // --- Shift Management ---
+  socket.on("startShift", async (data) => {
+    const result = await shift.startShift(data);
+    socket.emit("return_startShift", result);
+  });
+
+  socket.on("getShiftSummary", async (shift_id) => {
+    const result = await shift.getShiftSummary(shift_id);
+    socket.emit("return_getShiftSummary", result);
+  });
+
+  socket.on("endShift", async (data) => {
+    const result = await shift.endShift(data);
+    socket.emit("return_endShift", result);
+  });
+
+  socket.on("getCurrentShift", async (store_id) => {
+    const result = await shift.getCurrentShift(store_id);
+    socket.emit("return_getCurrentShift", result);
+  });
+
   socket.on("getMasterAddonGroups", async () => {
     const result = await product.getMasterAddonGroups();
     socket.emit("return_getMasterAddonGroups", result);
+  });
+
+  socket.on("getSyncStatus", async (master_product_id) => {
+    const result = await product.getSyncStatus(master_product_id);
+    socket.emit("return_getSyncStatus", result);
   });
 
   // --- Dashboard Data ---
@@ -152,6 +188,31 @@ io.on("connection", (socket) => {
     socket.emit("return_getCouponCampaigns", result);
   });
 
+  socket.on("getCouponCampaignById", async (id) => {
+    const result = await coupon.getCouponCampaignById(id);
+    socket.emit("return_getCouponCampaignById", result);
+  });
+
+  socket.on("toggleCouponCampaign", async (id) => {
+    const result = await coupon.toggleCouponCampaign(id);
+    socket.emit("return_toggleCouponCampaign", result);
+  });
+
+  socket.on("updateCouponCampaign", async (data) => {
+    const result = await coupon.updateCouponCampaign(data);
+    socket.emit("return_updateCouponCampaign", result);
+  });
+
+  socket.on("appendCoupons", async (data) => {
+    const result = await coupon.appendCoupons(data.campaignId, data.count);
+    socket.emit("return_appendCoupons", result);
+  });
+
+  socket.on("deleteCouponCampaign", async (id) => {
+    const result = await coupon.deleteCouponCampaign(id);
+    socket.emit("return_deleteCouponCampaign", result);
+  });
+
   socket.on("validateCoupon", async (data) => {
     // data: { code, storeId, productIds }
     const result = await coupon.validateCoupon(data.code, data.storeId, data.productIds);
@@ -162,6 +223,84 @@ io.on("connection", (socket) => {
     // data: { code, orderId }
     const result = await coupon.markCouponAsUsed(data.code, data.orderId);
     socket.emit("return_markCouponAsUsed", result);
+  });
+
+  socket.on("getCouponUsage", async (campaignId) => {
+    const result = await coupon.getCouponUsage(campaignId);
+    socket.emit("return_getCouponUsage", result);
+  });
+
+  // --- Member Management ---
+  socket.on("getMembers", async (filters) => {
+    const result = await member.getMembers(filters);
+    socket.emit("return_getMembers", result);
+  });
+
+  socket.on("getMemberGroups", async () => {
+    const result = await member.getMemberGroups();
+    socket.emit("return_getMemberGroups", result);
+  });
+
+  socket.on("upsertMember", async (data) => {
+    const result = await member.upsertMember(data);
+    socket.emit("return_upsertMember", result);
+  });
+
+  socket.on("upsertMemberGroup", async (data) => {
+    const result = await member.upsertMemberGroup(data);
+    socket.emit("return_upsertMemberGroup", result);
+  });
+
+  socket.on("deleteMember", async (id) => {
+    const result = await member.deleteMember(id);
+    socket.emit("return_deleteMember", result);
+  });
+
+  socket.on("getMemberTransactions", async (memberId) => {
+    const result = await member.getMemberTransactions(memberId);
+    socket.emit("return_getMemberTransactions", result);
+  });
+
+  socket.on("adjustPoints", async (data) => {
+    const result = await member.adjustPoints(data);
+    socket.emit("return_adjustPoints", result);
+  });
+
+  socket.on("getMemberByCode", async (code) => {
+    const result = await member.getMemberByCode(code);
+    socket.emit("return_getMemberByCode", result);
+  });
+
+  // --- Credit Card Companies ---
+  socket.on("getCreditCardCompanies", async () => {
+    const result = await config.getCreditCardCompanies();
+    socket.emit("return_getCreditCardCompanies", result);
+  });
+
+  socket.on("upsertCreditCardCompany", async (data) => {
+    const result = await config.upsertCreditCardCompany(data);
+    socket.emit("return_upsertCreditCardCompany", result);
+  });
+
+  socket.on("deleteCreditCardCompany", async (id) => {
+    const result = await config.deleteCreditCardCompany(id);
+    socket.emit("return_deleteCreditCardCompany", result);
+  });
+
+  // --- Payment Configuration ---
+  socket.on("getPaymentConfigs", async () => {
+    const result = await config.getPaymentConfigs();
+    socket.emit("return_getPaymentConfigs", result);
+  });
+
+  socket.on("updatePaymentConfig", async (data) => {
+    const result = await config.updatePaymentConfig(data, io);
+    socket.emit("return_updatePaymentConfig", result);
+  });
+
+  socket.on("triggerPaymentSync", async () => {
+    const result = await config.triggerPaymentSync(io);
+    socket.emit("return_triggerPaymentSync", result);
   });
 
   // --- User Management ---
@@ -234,6 +373,16 @@ io.on("connection", (socket) => {
   socket.on("deletePromotion", async (data) => {
     const result = await promotion.deletePromotion(data);
     socket.emit("return_deletePromotion", result);
+  });
+
+  socket.on("togglePromotion", async (id) => {
+    const result = await promotion.togglePromotion(id);
+    socket.emit("return_togglePromotion", result);
+  });
+
+  socket.on("getPromotionById", async (id) => {
+    const result = await promotion.getPromotionById(id);
+    socket.emit("return_getPromotionById", result);
   });
 
   socket.on("validatePromotion", async (data) => {

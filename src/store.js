@@ -8,13 +8,15 @@ const CreateStore = async (data) => {
   try {
     await client.query("BEGIN");
     const insertUserSql = `
-     INSERT INTO stores (name, name_eng, description, is_stock_enabled) VALUES($1, $2, $3, $4) RETURNING *;
+     INSERT INTO stores (name, name_eng, description, is_stock_enabled, allow_tables, table_count) VALUES($1, $2, $3, $4, $5, $6) RETURNING *;
     `;
     const questrValue = [
       data.name,
       data.name_eng || '',
       data.description,
-      data.is_stock_enabled || false
+      data.is_stock_enabled || false,
+      data.allow_tables || false,
+      data.table_count || 0
     ];
     await client.query(insertUserSql, questrValue);
     await client.query("COMMIT");
@@ -36,14 +38,16 @@ const UpdateStore = async (data) => {
     await client.query("BEGIN");
     const updateSql = `
      UPDATE stores 
-     SET name = $1, name_eng = $2, description = $3, is_stock_enabled = $4 
-     WHERE id = $5 RETURNING *;
+     SET name = $1, name_eng = $2, description = $3, is_stock_enabled = $4, allow_tables = $5, table_count = $6 
+     WHERE id = $7 RETURNING *;
     `;
     const values = [
       data.name,
       data.name_eng || '',
       data.description,
       data.is_stock_enabled || false,
+      data.allow_tables || false,
+      data.table_count || 0,
       data.id
     ];
     await client.query(updateSql, values);
@@ -62,7 +66,7 @@ const UpdateStore = async (data) => {
 
 const getStore = async () => {
   const queryStr = `
-     SELECT id, name, name_eng, is_active, description, is_stock_enabled 
+     SELECT id, name, name_eng, is_active, description, is_stock_enabled, allow_tables, table_count 
      FROM stores 
      WHERE id != '00000000-0000-0000-0000-000000000000'`;
   try {

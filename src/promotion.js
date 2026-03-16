@@ -194,3 +194,15 @@ module.exports = {
     validatePromotion,
     getPromotionUsage
 };
+
+
+// module.exports = {
+//     getPromotions,
+//     createPromotion,
+//     updatePromotion,
+//     deletePromotion,
+//     validatePromotion,
+//     getPromotionUsage,
+//     togglePromotion,
+//     getPromotionById
+// };
