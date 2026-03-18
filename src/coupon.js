@@ -233,12 +233,13 @@ const updateCouponCampaign = async (data) => {
 
 const getCouponCampaignById = async (campaignId) => {
     try {
-        const res = await pool.query(`SELECT * FROM tbl_coupon_campaigns WHERE id = $1`, [campaignId]);
+        if (!campaignId || campaignId === '0' || campaignId === 0) return { status: 404, msg: "Not found" };
+        const res = await pool.query(`SELECT * FROM tbl_coupon_campaigns WHERE id::text = $1::text`, [campaignId]);
         if (res.rows.length === 0) return { status: 404, msg: "Not found" };
         
         const campaign = res.rows[0];
-        const storeLinks = await pool.query(`SELECT store_id FROM tbl_coupon_store_links WHERE campaign_id = $1`, [campaignId]);
-        const productLinks = await pool.query(`SELECT product_id FROM tbl_coupon_product_links WHERE campaign_id = $1`, [campaignId]);
+        const storeLinks = await pool.query(`SELECT store_id FROM tbl_coupon_store_links WHERE campaign_id::text = $1::text`, [campaignId]);
+        const productLinks = await pool.query(`SELECT product_id FROM tbl_coupon_product_links WHERE campaign_id::text = $1::text`, [campaignId]);
         
         campaign.store_ids = storeLinks.rows.map(r => r.store_id);
         campaign.product_ids = productLinks.rows.map(r => r.product_id);
@@ -270,6 +271,9 @@ const markCouponAsUsed = async (code, orderId) => {
 
 const getCouponUsage = async (campaignId) => {
     try {
+        if (!campaignId || campaignId === '0' || campaignId === 0) {
+            return { status: 200, msg: [] };
+        }
         const queryStr = `
             SELECT 
                 cp.id as coupon_id,
@@ -287,7 +291,7 @@ const getCouponUsage = async (campaignId) => {
             FROM tbl_coupons cp
             LEFT JOIN tbl_orders o ON cp.order_id = o.id
             LEFT JOIN stores s ON o.store_id = s.id
-            WHERE cp.campaign_id = $1 AND cp.is_used = TRUE
+            WHERE cp.campaign_id::text = $1::text AND cp.is_used = TRUE
             ORDER BY cp.used_at DESC;
         `;
         const result = await pool.query(queryStr, [campaignId]);
@@ -301,16 +305,17 @@ const getCouponUsage = async (campaignId) => {
 const appendCoupons = async (campaignId, count) => {
     const client = await pool.connect();
     try {
+        if (!campaignId || campaignId === '0' || campaignId === 0) return { status: 404, msg: "Campaign not found" };
         await client.query("BEGIN");
 
         // Get campaign prefix and current max sequence
-        const camRes = await client.query(`SELECT prefix FROM tbl_coupon_campaigns WHERE id = $1`, [campaignId]);
+        const camRes = await client.query(`SELECT prefix FROM tbl_coupon_campaigns WHERE id::text = $1::text`, [campaignId]);
         if (camRes.rows.length === 0) return { status: 404, msg: "Campaign not found" };
 
         const prefix = camRes.rows[0].prefix;
         // Find current max sequence number to continue from
         const maxRes = await client.query(
-            `SELECT code FROM tbl_coupons WHERE campaign_id = $1 ORDER BY created_at DESC LIMIT 1`,
+            `SELECT code FROM tbl_coupons WHERE campaign_id::text = $1::text ORDER BY created_at DESC LIMIT 1`,
             [campaignId]
         );
 
@@ -346,19 +351,20 @@ const appendCoupons = async (campaignId, count) => {
 const deleteCouponCampaign = async (campaignId) => {
     const client = await pool.connect();
     try {
+        if (!campaignId || campaignId === '0' || campaignId === 0) return { status: 404, msg: "Campaign not found" };
         await client.query("BEGIN");
 
         // 1. Delete codes
-        await client.query(`DELETE FROM tbl_coupons WHERE campaign_id = $1`, [campaignId]);
+        await client.query(`DELETE FROM tbl_coupons WHERE campaign_id::text = $1::text`, [campaignId]);
 
         // 2. Delete store links
-        await client.query(`DELETE FROM tbl_coupon_store_links WHERE campaign_id = $1`, [campaignId]);
+        await client.query(`DELETE FROM tbl_coupon_store_links WHERE campaign_id::text = $1::text`, [campaignId]);
 
         // 3. Delete product links
-        await client.query(`DELETE FROM tbl_coupon_product_links WHERE campaign_id = $1`, [campaignId]);
+        await client.query(`DELETE FROM tbl_coupon_product_links WHERE campaign_id::text = $1::text`, [campaignId]);
 
         // 4. Delete campaign itself
-        const result = await client.query(`DELETE FROM tbl_coupon_campaigns WHERE id = $1`, [campaignId]);
+        const result = await client.query(`DELETE FROM tbl_coupon_campaigns WHERE id::text = $1::text`, [campaignId]);
 
         if (result.rowCount === 0) {
             await client.query("ROLLBACK");

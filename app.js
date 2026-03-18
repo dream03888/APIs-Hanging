@@ -15,9 +15,11 @@ const order = require("./src/order.js");
 const member = require("./src/member.js");
 const config = require("./src/config.js");
 const masterOption = require("./src/master_option.js");
-const promotion = require("./src/promotion.js");
+const PromotionAPI = require("./src/promotion.js");
+fs.writeFileSync(path.join(__dirname, "debug_log.txt"), "Promotion Module Keys: " + Object.keys(PromotionAPI).join(", "), "utf8");
 const coupon = require("./src/coupon.js");
 const shift = require("./src/shift.js");
+const terminal = require("./src/terminal.js");
 
 
 const axios = require("axios");
@@ -135,6 +137,16 @@ io.on("connection", (socket) => {
     socket.emit("return_getMenuSets", result);
   });
 
+  socket.on("upsertMenuSet", async (data) => {
+    const result = await product.upsertMenuSet(data);
+    socket.emit("return_upsertMenuSet", result);
+  });
+
+  socket.on("deleteMenuSet", async (id) => {
+    const result = await product.deleteMenuSet(id);
+    socket.emit("return_deleteMenuSet", result);
+  });
+
   // --- Shift Management ---
   socket.on("startShift", async (data) => {
     const result = await shift.startShift(data);
@@ -166,15 +178,38 @@ io.on("connection", (socket) => {
     socket.emit("return_getSyncStatus", result);
   });
 
+  socket.on("unsyncProductFromStore", async (data) => {
+    const result = await product.unsyncProductFromStore(data);
+    socket.emit("return_unsyncProductFromStore", result);
+    if (result.status === 200) {
+      io.emit("menu_updated", { store_id: data.store_id, action: 'UNSYNC' });
+    }
+  });
+
   // --- Dashboard Data ---
-  socket.on("getSalesSummary", async (storeId) => {
-    const result = await dashboard.getSalesSummary(storeId);
+  socket.on("getSalesSummary", async (data) => {
+    const result = await dashboard.getSalesSummary(data);
     socket.emit("return_getSalesSummary", result);
   });
 
-  socket.on("getTopSellingItems", async (storeId) => {
-    const result = await dashboard.getTopSellingItems(storeId);
+  socket.on("getTopSellingItems", async (data) => {
+    const result = await dashboard.getTopSellingItems(data);
     socket.emit("return_getTopSellingItems", result);
+  });
+
+  socket.on("getBuyPerBillDashboard", async (data) => {
+    const result = await dashboard.getBuyPerBillDashboard(data);
+    socket.emit("return_getBuyPerBillDashboard", result);
+  });
+
+  socket.on("getProductSalesDashboard", async (data) => {
+    const result = await dashboard.getProductSalesDashboard(data);
+    socket.emit("return_getProductSalesDashboard", result);
+  });
+
+  socket.on("getPaymentDashboard", async (data) => {
+    const result = await dashboard.getPaymentDashboard(data);
+    socket.emit("return_getPaymentDashboard", result);
   });
 
   // --- Coupon Management ---
@@ -254,6 +289,11 @@ io.on("connection", (socket) => {
   socket.on("deleteMember", async (id) => {
     const result = await member.deleteMember(id);
     socket.emit("return_deleteMember", result);
+  });
+
+  socket.on("deleteMemberGroup", async (id) => {
+    const result = await member.deleteMemberGroup(id);
+    socket.emit("return_deleteMemberGroup", result);
   });
 
   socket.on("getMemberTransactions", async (memberId) => {
@@ -356,42 +396,42 @@ io.on("connection", (socket) => {
 
   // --- Promotions ---
   socket.on("getPromotions", async (store_id) => {
-    const result = await promotion.getPromotions(store_id);
+    const result = await PromotionAPI.getPromotions(store_id);
     socket.emit("return_getPromotions", result);
   });
 
   socket.on("createPromotion", async (data) => {
-    const result = await promotion.createPromotion(data);
+    const result = await PromotionAPI.createPromotion(data);
     socket.emit("return_createPromotion", result);
   });
 
   socket.on("updatePromotion", async (data) => {
-    const result = await promotion.updatePromotion(data);
+    const result = await PromotionAPI.updatePromotion(data);
     socket.emit("return_updatePromotion", result);
   });
 
   socket.on("deletePromotion", async (data) => {
-    const result = await promotion.deletePromotion(data);
+    const result = await PromotionAPI.deletePromotion(data);
     socket.emit("return_deletePromotion", result);
   });
 
   socket.on("togglePromotion", async (id) => {
-    const result = await promotion.togglePromotion(id);
+    const result = await PromotionAPI.togglePromotion(id);
     socket.emit("return_togglePromotion", result);
   });
 
   socket.on("getPromotionById", async (id) => {
-    const result = await promotion.getPromotionById(id);
+    const result = await PromotionAPI.getPromotionById(id);
     socket.emit("return_getPromotionById", result);
   });
 
   socket.on("validatePromotion", async (data) => {
-    const result = await promotion.validatePromotion(data);
+    const result = await PromotionAPI.validatePromotion(data);
     socket.emit("return_validatePromotion", result);
   });
 
   socket.on("getPromotionUsage", async (promotion_id) => {
-    const result = await promotion.getPromotionUsage(promotion_id);
+    const result = await PromotionAPI.getPromotionUsage(promotion_id);
     socket.emit("return_getPromotionUsage", result);
   });
 
@@ -419,13 +459,13 @@ io.on("connection", (socket) => {
   // -----------------------
 
   // --- Dashboard ---
-  socket.on("getSalesSummary", async (store_id) => {
-    const result = await dashboard.getSalesSummary(store_id);
+  socket.on("getSalesSummary", async (data) => {
+    const result = await dashboard.getSalesSummary(data);
     socket.emit("return_getSalesSummary", result);
   });
 
-  socket.on("getTopSellingItems", async (store_id) => {
-    const result = await dashboard.getTopSellingItems(store_id);
+  socket.on("getTopSellingItems", async (data) => {
+    const result = await dashboard.getTopSellingItems(data);
     socket.emit("return_getTopSellingItems", result);
   });
 
@@ -508,6 +548,21 @@ io.on("connection", (socket) => {
     }
   });
   // -----------------------
+
+  socket.on("getTerminal", async (data) => {
+    const result = await terminal.getTerminal(data);
+    socket.emit("return_getTerminal", result);
+  });
+
+  socket.on("updateTerminalConfig", async (data) => {
+    const result = await terminal.updateTerminalConfig(data);
+    socket.emit("return_updateTerminalConfig", result);
+  });
+
+  socket.on("getStoreTerminals", async (storeId) => {
+    const result = await terminal.getStoreTerminals(storeId);
+    socket.emit("return_getStoreTerminals", result);
+  });
 
   socket.on("disconnect", () => {
     // console.log(`❌ Socket disconnected: ${socket.id}`);

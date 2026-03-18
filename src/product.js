@@ -11,9 +11,9 @@ const createProduct = async (data) => {
         let questrValue = []
         const discountValue = data.discountParams?.value ?? null;
         const discountType = data.discountParams?.type ?? null;
-        insertUserSql = `INSERT INTO products (store_id , name , price,image_url , name_eng , discount_value , discount_type, promotion_id) 
-    VALUES($1 , $2,$3,$4,$5,$6,$7,$8) RETURNING *;`;
-        questrValue = [data.storeId, data.name, data.price, data.image_url, data.name_eng, discountValue, discountType, data.promotion_id || null];
+        insertUserSql = `INSERT INTO products (store_id , name , price,image_url , name_eng , discount_value , discount_type, promotion_id, category_id, is_stock_tracked, stock_quantity, min_stock_level) 
+    VALUES($1 , $2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *;`;
+        questrValue = [data.storeId, data.name, data.price, data.image_url, data.name_eng, discountValue, discountType, data.promotion_id || null, data.menu_set_id || null, data.is_stock_tracked || false, data.stock_quantity || 0, data.min_stock_level || 0];
         const result = await client.query(insertUserSql, questrValue);
         if (data.items && data.items.length > 0) {
             for (let i = 0; i < data.items.length; i++) {
@@ -71,8 +71,12 @@ const updateProduct = async (data) => {
                 discount_value = $5,
                 discount_type  = $6,
                 is_active     = $7,
-                promotion_id  = $8
-            WHERE id = $9;
+                promotion_id  = $8,
+                category_id   = $9,
+                is_stock_tracked = $10,
+                stock_quantity = $11,
+                min_stock_level = $12
+            WHERE id = $13;
         `;
         const isMaster = currentProd.rows[0]?.store_id === masterStoreId;
         const hasPromo = !!data.promotion_id;
@@ -86,6 +90,10 @@ const updateProduct = async (data) => {
             hasPromo ? discountType : null,
             data.product_active,
             data.promotion_id || null,
+            data.menu_set_id || null,
+            data.is_stock_tracked ?? false,
+            data.stock_quantity ?? 0,
+            data.min_stock_level ?? 0,
             data.product_id
         ];
         await client.query(updateProductSql, productValues);
@@ -201,6 +209,10 @@ SELECT
   COALESCE(tp.value::NUMERIC, p.discount_value::NUMERIC, mp.discount_value::NUMERIC) AS discount_value,
   -- Prefer local product's own promotion, fallback to master's if branch has none set
   COALESCE(p.promotion_id, mp.promotion_id) AS promotion_id,
+  p.category_id AS menu_set_id,
+  p.is_stock_tracked,
+  p.stock_quantity,
+  p.min_stock_level,
   COALESCE(p.master_product_id, NULL) as master_product_id,
   (
     SELECT jsonb_agg(s.name) 
@@ -219,7 +231,7 @@ LEFT JOIN products mp ON p.master_product_id = mp.id
 LEFT JOIN tbl_promotions tp ON COALESCE(p.promotion_id, mp.promotion_id) = tp.id
 LEFT JOIN options olocal ON p.id = olocal.product_id
 LEFT JOIN options omaster ON p.master_product_id = omaster.product_id
-WHERE p.store_id = $1;`;
+WHERE p.store_id::text = $1::text;`;
     const questrValue = [store_id];
     try {
         return pool
@@ -330,13 +342,13 @@ const getSyncStatus = async (master_product_id) => {
 const getMenuSets = async (store_id) => {
     try {
         const queryStr = `
-            SELECT ms.id, ms.name, ms.store_id as "storeId", 
-                   COALESCE(array_agg(msi.product_id) FILTER (WHERE msi.product_id IS NOT NULL), '{}') as "menuIds"
+            SELECT ms.id, ms.name, ms.name_en as "nameEn", ms.store_id as "storeId", ms.sort_order as "sortOrder",
+                   COALESCE(array_agg(p.id) FILTER (WHERE p.id IS NOT NULL), '{}') as "menuIds"
             FROM menu_sets ms
-            LEFT JOIN menu_sets_items msi ON ms.id = msi.menu_set_id
-            WHERE ms.store_id = $1
+            LEFT JOIN products p ON ms.id = p.category_id
+            WHERE ms.store_id::text = $1::text
             GROUP BY ms.id
-            ORDER BY ms.name;
+            ORDER BY ms.sort_order, ms.name;
         `;
         const result = await pool.query(queryStr, [store_id]);
         return { status: 200, msg: result.rows };
@@ -346,6 +358,76 @@ const getMenuSets = async (store_id) => {
     }
 };
 
+const upsertMenuSet = async (data) => {
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
+        let setId = data.id;
+
+        // 1. Upsert menu_sets
+        if (data.isNew || !setId) {
+            const res = await client.query(
+                `INSERT INTO menu_sets (name, name_en, store_id, sort_order) VALUES ($1, $2, $3, $4) RETURNING id`,
+                [data.name, data.nameEn, data.storeId, data.sortOrder || 0]
+            );
+            setId = res.rows[0].id;
+        } else {
+            await client.query(
+                `UPDATE menu_sets SET name = $1, name_en = $2, sort_order = $3 WHERE id = $4`,
+                [data.name, data.nameEn, data.sortOrder || 0, setId]
+            );
+        }
+
+        // 2. Refresh items (Update products category_id)
+        // First, clear old links for this set
+        await client.query(`UPDATE products SET category_id = NULL WHERE category_id = $1`, [setId]);
+        if (data.menuIds && data.menuIds.length > 0) {
+            await client.query(
+                `UPDATE products SET category_id = $1 WHERE id = ANY($2)`,
+                [setId, data.menuIds]
+            );
+        }
+
+        await client.query("COMMIT");
+        return { status: 200, msg: "success", data: { id: setId } };
+    } catch (error) {
+        await client.query("ROLLBACK");
+        console.error("Error upsertMenuSet:", error);
+        return { status: 400, msg: error.message };
+    } finally {
+        client.release();
+    }
+}
+
+const deleteMenuSet = async (id) => {
+    try {
+        await pool.query(`UPDATE products SET category_id = NULL WHERE category_id = $1`, [id]);
+        await pool.query(`DELETE FROM menu_sets_items WHERE menu_set_id = $1`, [id]);
+        await pool.query(`DELETE FROM menu_sets WHERE id = $1`, [id]);
+        return { status: 200, msg: "success" };
+    } catch (error) {
+        console.error("Error deleteMenuSet:", error);
+        return { status: 400, msg: error.message };
+    }
+}
+
+const unsyncProductFromStore = async (data) => {
+    const { master_product_id, store_id } = data;
+    try {
+        // Delete the record in products where it points to the master_product_id for that specific store
+        const query = `
+            DELETE FROM products 
+            WHERE master_product_id = $1 
+            AND store_id = $2;
+        `;
+        await pool.query(query, [master_product_id, store_id]);
+        return { status: 200, msg: "success unsynced" };
+    } catch (error) {
+        console.error("Error unsyncProductFromStore:", error);
+        return { status: 400, msg: error.message };
+    }
+}
+
 module.exports = {
     createProduct,
     updateProduct,
@@ -353,5 +435,8 @@ module.exports = {
     getProduct,
     getMasterAddonGroups,
     getSyncStatus,
-    getMenuSets
+    getMenuSets,
+    upsertMenuSet,
+    deleteMenuSet,
+    unsyncProductFromStore
 };

@@ -17,6 +17,7 @@ const getUsers = async () => {
                 phone,
                 role_id,
                 store_id,
+                store_ids,
                 permissions,
                 create_at
             FROM tbl_users 
@@ -28,6 +29,7 @@ const getUsers = async () => {
         const mappedUsers = result.rows.map(row => ({
             ...row,
             role: row.role_id === 1 ? 'superadmin' : 'storeadmin',
+            store_ids: typeof row.store_ids === 'string' ? JSON.parse(row.store_ids) : (row.store_ids || []),
             permissions: typeof row.permissions === 'string' ? JSON.parse(row.permissions) : (row.permissions || [])
         }));
 
@@ -48,8 +50,8 @@ const createUser = async (data) => {
         const permissionsJson = JSON.stringify(data.permissions || []);
 
         const insertUserSql = `
-            INSERT INTO tbl_users (username, password, f_name, l_name, emp_code, phone, role_id, store_id, permissions) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) 
+            INSERT INTO tbl_users (username, password, f_name, l_name, emp_code, phone, role_id, store_id, store_ids, permissions) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) 
             RETURNING user_id;
         `;
 
@@ -67,6 +69,7 @@ const createUser = async (data) => {
             data.phone || '',
             data.role === 'superadmin' ? 1 : 2,
             data.storeId || null,
+            JSON.stringify(data.storeIds || (data.storeId ? [data.storeId] : [])),
             permissionsJson
         ];
 
@@ -97,7 +100,7 @@ const updateUser = async (data) => {
 
         let updateSql = `
             UPDATE tbl_users 
-            SET username = $1, f_name = $2, l_name = $3, emp_code = $4, phone = $5, role_id = $6, store_id = $7, permissions = $8
+            SET username = $1, f_name = $2, l_name = $3, emp_code = $4, phone = $5, role_id = $6, store_id = $7, store_ids = $8, permissions = $9
         `;
         let values = [
             data.username,
@@ -107,6 +110,7 @@ const updateUser = async (data) => {
             data.phone || '',
             data.role === 'superadmin' ? 1 : 2,
             data.storeId || null,
+            JSON.stringify(data.storeIds || (data.storeId ? [data.storeId] : [])),
             permissionsJson
         ];
 
@@ -115,10 +119,10 @@ const updateUser = async (data) => {
             const salt = await bcrypt.genSalt(10);
             const hashedPassword = await bcrypt.hash(data.password, salt);
 
-            updateSql += `, password = $9 WHERE user_id = $10`;
+            updateSql += `, password = $10 WHERE user_id = $11`;
             values.push(hashedPassword, data.id);
         } else {
-            updateSql += ` WHERE user_id = $9`;
+            updateSql += ` WHERE user_id = $10`;
             values.push(data.id);
         }
 
@@ -171,13 +175,50 @@ const login = async (data) => {
 
         const role = user.role_id === 1 ? 'superadmin' : 'storeadmin';
         const permissions = typeof user.permissions === 'string' ? JSON.parse(user.permissions) : (user.permissions || []);
+        const storeIds = typeof user.store_ids === 'string' ? JSON.parse(user.store_ids) : (user.store_ids || []);
+
+        // Fetch assigned stores details
+        let assignedStores = [];
+        if (role === 'superadmin') {
+            const allStores = await pool.query(`SELECT id, name, name_eng, allow_tables, table_count FROM stores ORDER BY name`);
+            assignedStores = allStores.rows;
+        } else {
+            // For back-compat and multi-store, we take both store_id and store_ids
+            const ids = new Set(storeIds);
+            if (user.store_id) ids.add(user.store_id);
+            
+            if (ids.size > 0) {
+                const storeResult = await pool.query(
+                    `SELECT id, name, name_eng, allow_tables, table_count FROM stores WHERE id = ANY($1::uuid[]) ORDER BY name`,
+                    [Array.from(ids)]
+                );
+                assignedStores = storeResult.rows;
+            }
+        }
+
+        // Check if session is already active
+        if (user.active_token && !data.force) {
+            try {
+                // Verify if the current token is still valid
+                jwt.verify(user.active_token, JWT_SECRET);
+                // If it didn't throw, it's still alive
+                return { 
+                    status: 409, 
+                    msg: "Session already active on another device.",
+                    user_id: user.user_id 
+                };
+            } catch (e) {
+                // Token expired or invalid, we can proceed to overwrite
+            }
+        }
 
         // Sign JWT Payload
         const payload = {
             id: user.user_id,
             username: user.username,
             role: role,
-            storeId: user.store_id,
+            storeId: user.store_id || (assignedStores.length > 0 ? assignedStores[0].id : null),
+            stores: assignedStores, // Provide full list of stores for selector
             permissions: permissions
         };
 

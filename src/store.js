@@ -8,7 +8,7 @@ const CreateStore = async (data) => {
   try {
     await client.query("BEGIN");
     const insertUserSql = `
-     INSERT INTO stores (name, name_eng, description, is_stock_enabled, allow_tables, table_count) VALUES($1, $2, $3, $4, $5, $6) RETURNING *;
+     INSERT INTO stores (name, name_eng, description, is_stock_enabled, allow_tables, table_count, store_code, hardware_config) VALUES($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *;
     `;
     const questrValue = [
       data.name,
@@ -16,7 +16,9 @@ const CreateStore = async (data) => {
       data.description,
       data.is_stock_enabled || false,
       data.allow_tables || false,
-      data.table_count || 0
+      data.table_count || 0,
+      data.store_code || null,
+      data.hardware_config || {}
     ];
     await client.query(insertUserSql, questrValue);
     await client.query("COMMIT");
@@ -38,8 +40,8 @@ const UpdateStore = async (data) => {
     await client.query("BEGIN");
     const updateSql = `
      UPDATE stores 
-     SET name = $1, name_eng = $2, description = $3, is_stock_enabled = $4, allow_tables = $5, table_count = $6 
-     WHERE id = $7 RETURNING *;
+     SET name = $1, name_eng = $2, description = $3, is_stock_enabled = $4, allow_tables = $5, table_count = $6, store_code = $7, hardware_config = $8
+     WHERE id = $9 RETURNING *;
     `;
     const values = [
       data.name,
@@ -48,6 +50,8 @@ const UpdateStore = async (data) => {
       data.is_stock_enabled || false,
       data.allow_tables || false,
       data.table_count || 0,
+      data.store_code || null,
+      data.hardware_config || {},
       data.id
     ];
     await client.query(updateSql, values);
@@ -66,7 +70,7 @@ const UpdateStore = async (data) => {
 
 const getStore = async () => {
   const queryStr = `
-     SELECT id, name, name_eng, is_active, description, is_stock_enabled, allow_tables, table_count 
+     SELECT id, name, name_eng, is_active, description, is_stock_enabled, allow_tables, table_count, store_code, hardware_config 
      FROM stores 
      WHERE id != '00000000-0000-0000-0000-000000000000'`;
   try {

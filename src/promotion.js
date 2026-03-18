@@ -161,27 +161,60 @@ const validatePromotion = async (data) => {
 };
 
 const getPromotionUsage = async (promotionId) => {
-    const queryStr = `
-        SELECT 
-            o.id,
-            o.pos_ref_no,
-            o.order_date,
-            o.total_amount,
-            o.subtotal,
-            o.discount_amount,
-            o.payment_method,
-            o.order_status,
-            s.name as store_name
-        FROM tbl_orders o
-        LEFT JOIN stores s ON o.store_id = s.id
-        WHERE o.promotion_id = $1
-        ORDER BY o.order_date DESC;
-    `;
     try {
+        if (!promotionId || promotionId === '0' || promotionId === 0) {
+            return { status: 200, msg: [] };
+        }
+        const queryStr = `
+            SELECT 
+                o.id,
+                o.pos_ref_no,
+                o.order_date,
+                o.total_amount,
+                o.subtotal,
+                o.discount_amount,
+                o.payment_method,
+                o.order_status,
+                s.name as store_name
+            FROM tbl_orders o
+            LEFT JOIN stores s ON o.store_id = s.id
+            WHERE o.promotion_id::text = $1::text
+            ORDER BY o.order_date DESC;
+        `;
         const result = await pool.query(queryStr, [promotionId]);
         return { status: 200, msg: result.rows };
     } catch (error) {
         console.error("Error getPromotionUsage:", error);
+        return { status: 400, msg: error.message };
+    }
+};
+
+const getPromotionById = async (id) => {
+    try {
+        const queryStr = `SELECT * FROM tbl_promotions WHERE id = $1`;
+        const result = await pool.query(queryStr, [id]);
+        if (result.rows.length === 0) return { status: 404, msg: "Promotion not found" };
+        
+        const promo = result.rows[0];
+        // Fetch linked products
+        const productRes = await pool.query(`SELECT id FROM products WHERE promotion_id = $1`, [promo.id]);
+        promo.product_ids = productRes.rows.map(r => r.id);
+        
+        return { status: 200, msg: promo };
+    } catch (error) {
+        console.error("Error getPromotionById:", error);
+        return { status: 400, msg: error.message };
+    }
+};
+
+const togglePromotion = async (id) => {
+    try {
+        const queryStr = `UPDATE tbl_promotions SET is_active = NOT is_active WHERE id = $1 RETURNING is_active`;
+        const result = await pool.query(queryStr, [id]);
+        if (result.rowCount === 0) return { status: 404, msg: "Promotion not found" };
+        return { status: 200, msg: "Promotion status toggled successfully", is_active: result.rows[0].is_active };
+    } catch (error) {
+        console.error("Error togglePromotion:", error);
         return { status: 400, msg: error.message };
     }
 };
@@ -192,17 +225,7 @@ module.exports = {
     updatePromotion,
     deletePromotion,
     validatePromotion,
-    getPromotionUsage
+    getPromotionUsage,
+    getPromotionById,
+    togglePromotion
 };
-
-
-// module.exports = {
-//     getPromotions,
-//     createPromotion,
-//     updatePromotion,
-//     deletePromotion,
-//     validatePromotion,
-//     getPromotionUsage,
-//     togglePromotion,
-//     getPromotionById
-// };

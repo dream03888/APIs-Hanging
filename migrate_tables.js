@@ -23,6 +23,18 @@ const migrate = async () => {
             await pool.query(`ALTER TABLE stores ADD COLUMN table_count INTEGER DEFAULT 0`);
         }
         
+        if (!columnNames.includes('store_code')) {
+            console.log("Adding column store_code...");
+            await pool.query(`ALTER TABLE stores ADD COLUMN store_code VARCHAR(10)`);
+            // Update existing stores to have a default code
+            await pool.query(`UPDATE stores SET store_code = 'POS' WHERE store_code IS NULL`);
+        }
+
+        if (!columnNames.includes('hardware_config')) {
+            console.log("Adding column hardware_config...");
+            await pool.query(`ALTER TABLE stores ADD COLUMN hardware_config JSONB DEFAULT '{}'`);
+        }
+        
         console.log("Migration complete.");
     } catch (e) {
         console.error(e);

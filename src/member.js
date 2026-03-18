@@ -147,12 +147,22 @@ const getMemberByCode = async (code) => {
     }
 };
 
+const deleteMemberGroup = async (id) => {
+    try {
+        await pool.query("DELETE FROM tbl_member_groups WHERE id = $1", [id]);
+        return { status: 200, msg: "success" };
+    } catch (error) {
+        return { status: 400, msg: error.message };
+    }
+};
+
 module.exports = {
     getMembers,
     getMemberGroups,
     upsertMember,
     upsertMemberGroup,
     deleteMember,
+    deleteMemberGroup,
     getMemberTransactions,
     adjustPoints,
     getMemberByCode

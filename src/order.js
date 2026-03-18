@@ -25,14 +25,26 @@ const submitOrder = async (data) => {
             throw new Error(`Invalid Store ID format (expected UUID, got: ${storeIdStr})`);
         }
 
-        const storeRes = await client.query(`SELECT id, name FROM stores WHERE id = $1`, [storeIdStr]);
+        const storeRes = await client.query(`SELECT id, name, store_code FROM stores WHERE id = $1`, [storeIdStr]);
         if (storeRes.rows.length === 0) {
             throw new Error("Store not found");
         }
+        const storeCode = storeRes.rows[0].store_code || "POS";
 
         // 2. Generate Daily Queue Number (Starts from 1 every day per store)
         // Check highest queue number for this store today
-        const today = new Date().toISOString().split('T')[0]; // "YYYY-MM-DD"
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const hour = String(now.getHours()).padStart(2, '0');
+        const minute = String(now.getMinutes()).padStart(2, '0');
+        const second = String(now.getSeconds()).padStart(2, '0');
+        const timestampStr = `${year}${month}${day}${hour}${minute}${second}`;
+        
+        // Final Invoice Number format: [STORE_CODE]-[YYYYMMDDHHMMSS]
+        const invoiceNo = `${storeCode}-${timestampStr}`;
+
         const queueRes = await client.query(`
             SELECT MAX(queue_number) as max_q 
             FROM tbl_orders 
@@ -51,15 +63,15 @@ const submitOrder = async (data) => {
         `;
         const orderParams = [
             storeIdStr,
-            data.totalAmount,
-            data.posRefNo || 'UNKNOWN',
-            data.paymentMethod || 'UNKNOWN',
+            data.totalAmount || data.total_amount,
+            invoiceNo, // Use the new generated invoice number
+            data.paymentMethod || data.payment_method || 'CASH',
             nextQueueNo,
-            data.subtotal || data.totalAmount,
+            data.subtotal || data.sub_total || data.totalAmount || data.total_amount,
             data.discount_amount || 0,
-            data.promotion_id || null,
-            data.orderType || 'takeaway',
-            data.tableNumber || null,
+            data.promotion_id || data.promo_id || null,
+            data.orderType || data.order_type || 'takeaway',
+            data.tableNumber || data.table_number || null,
             data.shiftId || data.shift_id || null
         ];
 
@@ -72,8 +84,9 @@ const submitOrder = async (data) => {
             console.log("Items to insert:", data.items);
             for (let item of data.items) {
                 // Formatting options into string if it exists
-                let optSummary = '';
-                if (item.options && Array.isArray(item.options) && item.options.length > 0) {
+                // Use provided summary or format from options array
+                let optSummary = item.optionsSummary || '';
+                if (!optSummary && item.options && Array.isArray(item.options) && item.options.length > 0) {
                     optSummary = item.options.map(o => {
                         const priceAdd = (o.priceDelta && o.priceDelta > 0) ? ` (+${o.priceDelta})` : '';
                         return `${o.name}${priceAdd}`;
@@ -89,6 +102,44 @@ const submitOrder = async (data) => {
                     VALUES ($1, $2, $3, $4, $5)
                 `;
                 await client.query(insertItemSql, [orderId, pId, qty, itemPrice, optSummary]);
+
+                // --- Stock Reduction ---
+                // 1. Direct Product Stock (1-to-1)
+                const productRes = await client.query(`SELECT is_stock_tracked, stock_quantity FROM products WHERE id = $1`, [pId]);
+                if (productRes.rows.length > 0) {
+                    const prod = productRes.rows[0];
+                    if (prod.is_stock_tracked) {
+                        await client.query(`
+                            UPDATE products 
+                            SET stock_quantity = stock_quantity - $1 
+                            WHERE id = $2
+                        `, [qty, pId]);
+                    }
+                }
+
+                // 2. Bill of Materials (BOM) / Ingredients
+                const recipeRes = await client.query(`
+                    SELECT ingredient_id, quantity_required 
+                    FROM tbl_recipe_items 
+                    WHERE product_id = $1
+                `, [pId]);
+                
+                if (recipeRes.rows.length > 0) {
+                    for (let recipe of recipeRes.rows) {
+                        const totalReq = recipe.quantity_required * qty;
+                        await client.query(`
+                            UPDATE tbl_ingredients 
+                            SET current_quantity = current_quantity - $1 
+                            WHERE id = $2
+                        `, [totalReq, recipe.ingredient_id]);
+                        
+                        // Optional: Create a stock transaction record for transparency
+                        await client.query(`
+                            INSERT INTO tbl_stock_transactions (ingredient_id, type, quantity_changed, reason)
+                            VALUES ($1, 'out', $2, $3)
+                        `, [recipe.ingredient_id, -totalReq, `Order ${invoiceNo}`]);
+                    }
+                }
             }
         }
 
